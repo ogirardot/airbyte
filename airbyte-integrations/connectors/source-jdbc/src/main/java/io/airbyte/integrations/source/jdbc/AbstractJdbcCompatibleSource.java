@@ -22,6 +22,7 @@ import io.airbyte.integrations.source.relationaldb.TableInfo;
 import io.airbyte.protocol.models.CommonField;
 import io.airbyte.protocol.models.JsonSchemaPrimitive;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
@@ -46,16 +47,22 @@ public abstract class AbstractJdbcCompatibleSource<Datatype> extends AbstractRel
 
   private static final Logger LOGGER = LoggerFactory.getLogger(AbstractJdbcCompatibleSource.class);
 
+  // constants defined in the DatabaseMetaData#getColumns method
+  // reference: https://docs.oracle.com/javase/8/docs/api/java/sql/DatabaseMetaData.html
   protected static final String JDBC_COLUMN_DATABASE_NAME = "TABLE_CAT";
   protected static final String JDBC_COLUMN_SCHEMA_NAME = "TABLE_SCHEM";
   protected static final String JDBC_COLUMN_TABLE_NAME = "TABLE_NAME";
   protected static final String JDBC_COLUMN_COLUMN_NAME = "COLUMN_NAME";
   protected static final String JDBC_COLUMN_DATA_TYPE = "DATA_TYPE";
+  protected static final String JDBC_COLUMN_TYPE_NAME = "TYPE_NAME";
+  protected static final String JDBC_COLUMN_SIZE = "COLUMN_SIZE";
 
   protected static final String INTERNAL_SCHEMA_NAME = "schemaName";
   protected static final String INTERNAL_TABLE_NAME = "tableName";
   protected static final String INTERNAL_COLUMN_NAME = "columnName";
   protected static final String INTERNAL_COLUMN_TYPE = "columnType";
+  protected static final String INTERNAL_COLUMN_TYPE_NAME = "columnTypeName";
+  protected static final String INTERNAL_COLUMN_SIZE = "columnSize";
 
   protected final String driverClass;
   protected final JdbcStreamingQueryConfiguration jdbcStreamingQueryConfiguration;
@@ -107,16 +114,10 @@ public abstract class AbstractJdbcCompatibleSource<Datatype> extends AbstractRel
   protected List<TableInfo<CommonField<Datatype>>> discoverInternal(final JdbcDatabase database, final String schema) throws Exception {
     final Set<String> internalSchemas = new HashSet<>(getExcludedInternalNameSpaces());
     return database.bufferedResultSetQuery(
+        // retrieve column metadata from the database
         conn -> conn.getMetaData().getColumns(getCatalog(database), schema, null, null),
-        resultSet -> Jsons.jsonNode(ImmutableMap.<String, Object>builder()
-            // we always want a namespace, if we cannot get a schema, use db name.
-            .put(INTERNAL_SCHEMA_NAME,
-                resultSet.getObject(JDBC_COLUMN_SCHEMA_NAME) != null ? resultSet.getString(JDBC_COLUMN_SCHEMA_NAME)
-                    : resultSet.getObject(JDBC_COLUMN_DATABASE_NAME))
-            .put(INTERNAL_TABLE_NAME, resultSet.getString(JDBC_COLUMN_TABLE_NAME))
-            .put(INTERNAL_COLUMN_NAME, resultSet.getString(JDBC_COLUMN_COLUMN_NAME))
-            .put(INTERNAL_COLUMN_TYPE, resultSet.getString(JDBC_COLUMN_DATA_TYPE))
-            .build()))
+        // store essential column metadata to a Json object from the result set about each column
+        this::getColumnMetadata)
         .stream()
         .filter(t -> !internalSchemas.contains(t.get(INTERNAL_SCHEMA_NAME).asText()))
         // group by schema and table name to handle the case where a table with the same name exists in
@@ -128,12 +129,34 @@ public abstract class AbstractJdbcCompatibleSource<Datatype> extends AbstractRel
             .nameSpace(fields.get(0).get(INTERNAL_SCHEMA_NAME).asText())
             .name(fields.get(0).get(INTERNAL_TABLE_NAME).asText())
             .fields(fields.stream()
+                // read the column metadata Json object, and determine its type
                 .map(f -> new CommonField<Datatype>(f.get(INTERNAL_COLUMN_NAME).asText(), getFieldType(f)) {})
                 .collect(Collectors.toList()))
             .build())
         .collect(Collectors.toList());
   }
 
+  /**
+   * @param resultSet Description of a column available in the table catalog.
+   * @return Essential information about a column to determine which table it belongs to and its type.
+   */
+  private JsonNode getColumnMetadata(final ResultSet resultSet) throws SQLException {
+    return Jsons.jsonNode(ImmutableMap.<String, Object>builder()
+        // we always want a namespace, if we cannot get a schema, use db name.
+        .put(INTERNAL_SCHEMA_NAME,
+            resultSet.getObject(JDBC_COLUMN_SCHEMA_NAME) != null ? resultSet.getString(JDBC_COLUMN_SCHEMA_NAME)
+                : resultSet.getObject(JDBC_COLUMN_DATABASE_NAME))
+        .put(INTERNAL_TABLE_NAME, resultSet.getString(JDBC_COLUMN_TABLE_NAME))
+        .put(INTERNAL_COLUMN_NAME, resultSet.getString(JDBC_COLUMN_COLUMN_NAME))
+        .put(INTERNAL_COLUMN_TYPE, resultSet.getString(JDBC_COLUMN_DATA_TYPE))
+        .put(INTERNAL_COLUMN_TYPE_NAME, resultSet.getString(JDBC_COLUMN_TYPE_NAME))
+        .put(INTERNAL_COLUMN_SIZE, resultSet.getInt(JDBC_COLUMN_SIZE))
+        .build());
+  }
+
+  /**
+   * @param field Essential column information returned from {@link AbstractJdbcCompatibleSource#getColumnMetadata}.
+   */
   public abstract Datatype getFieldType(final JsonNode field);
 
   @Override

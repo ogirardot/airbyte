@@ -30,7 +30,8 @@ import io.airbyte.protocol.models.CommonField;
 import io.airbyte.protocol.models.ConfiguredAirbyteCatalog;
 import io.airbyte.protocol.models.ConfiguredAirbyteStream;
 import io.airbyte.protocol.models.SyncMode;
-import java.sql.JDBCType;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,6 +54,9 @@ public class MySqlSource extends AbstractJdbcCompatibleSource<MysqlType> impleme
       "useSSL=true",
       "requireSSL=true",
       "verifyServerCertificate=false");
+
+  private static final String JDBC_COLUMN_TYPE_NAME = "TYPE_NAME";
+  protected static final String INTERNAL_SCHEMA_NAME = "schemaName";
 
   public static Source sshWrappedSource() {
     return new SshWrappedSource(new MySqlSource(), List.of("host"), List.of("port"));
@@ -153,21 +157,40 @@ public class MySqlSource extends AbstractJdbcCompatibleSource<MysqlType> impleme
     return checkOperations;
   }
 
-  // TODO: update this method to return mysql specific type
   @Override
   public MysqlType getFieldType(final JsonNode field) {
-    JDBCType jdbcType;
     try {
-      jdbcType = JDBCType.valueOf(field.get(INTERNAL_COLUMN_TYPE).asInt());
+      // MysqlType#getByName can handle the full MySQL type name
+      // e.g. MEDIUMINT UNSIGNED
+      final MysqlType literalType = MysqlType.getByName(field.get(INTERNAL_COLUMN_TYPE_NAME).asText());
+      final int columnSize = field.get(INTERNAL_COLUMN_SIZE).asInt();
+
+      switch (literalType) {
+        case BIT -> {
+          if (columnSize == 1) {
+            // BIT(1) is interpreted as boolean
+            return MysqlType.BOOLEAN;
+          } else {
+            return MysqlType.BINARY;
+          }
+        }
+        case TINYINT, TINYINT_UNSIGNED -> {
+          if (columnSize == 1) {
+            return MysqlType.BOOLEAN;
+          }
+        }
+        default ->
+      }
+      return MysqlType.getByName(field.get(INTERNAL_COLUMN_TYPE_NAME).asText());
     } catch (final IllegalArgumentException ex) {
-      LOGGER.warn(String.format("Could not convert column: %s from table: %s.%s with type: %s. Casting to VARCHAR.",
+      LOGGER.warn(String.format("Could not convert column: %s from table: %s.%s with type: %s (type name: %s). Casting to VARCHAR.",
           field.get(INTERNAL_COLUMN_NAME),
           field.get(INTERNAL_SCHEMA_NAME),
           field.get(INTERNAL_TABLE_NAME),
-          field.get(INTERNAL_COLUMN_TYPE)));
-      jdbcType = JDBCType.VARCHAR;
+          field.get(INTERNAL_COLUMN_TYPE),
+          field.get(INTERNAL_COLUMN_TYPE_NAME)));
+      return MysqlType.VARCHAR;
     }
-    return MysqlType.getByJdbcType(jdbcType.getVendorTypeNumber());
   }
 
   @Override

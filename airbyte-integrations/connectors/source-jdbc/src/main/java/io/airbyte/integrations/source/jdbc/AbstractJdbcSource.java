@@ -34,7 +34,6 @@ public abstract class AbstractJdbcSource extends AbstractJdbcCompatibleSource<JD
 
   @Override
   public JDBCType getFieldType(final JsonNode field) {
-    JDBCType jdbcType;
     try {
       return JDBCType.valueOf(field.get(INTERNAL_COLUMN_TYPE).asInt());
     } catch (final IllegalArgumentException ex) {

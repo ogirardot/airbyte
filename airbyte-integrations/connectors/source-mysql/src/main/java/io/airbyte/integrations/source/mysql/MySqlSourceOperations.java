@@ -34,19 +34,17 @@ public class MySqlSourceOperations extends AbstractJdbcCompatibleSourceOperation
     switch (columnType) {
       case BIT -> {
         if (field.getLength() == 1L) {
-          // BIT(1) is interpreted as boolean
+          // BIT(1) is boolean
           putBoolean(json, columnName, resultSet, colIndex);
         } else {
-          // BIT(>1)
           putBinary(json, columnName, resultSet, colIndex);
         }
       }
       case TINYINT, TINYINT_UNSIGNED -> {
         if (field.getLength() == 1L) {
-          // TINYINT(1)
+          // TINYINT(1) is boolean
           putBoolean(json, columnName, resultSet, colIndex);
         } else {
-          // TINYINT(>1)
           putShortInt(json, columnName, resultSet, colIndex);
         }
       }

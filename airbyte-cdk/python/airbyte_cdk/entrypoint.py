@@ -15,6 +15,7 @@ from airbyte_cdk.logger import init_logger
 from airbyte_cdk.models import AirbyteMessage, Status, Type
 from airbyte_cdk.sources import Source
 from airbyte_cdk.sources.utils.schema_helpers import check_config_against_spec_or_exit, split_config
+from airbyte_cdk.sources.utils.sentry import AirbyteSentry
 
 logger = init_logger("airbyte")
 
@@ -23,6 +24,10 @@ class AirbyteEntrypoint(object):
     def __init__(self, source: Source):
         self.source = source
         self.logger = logging.getLogger(f"airbyte.{getattr(source, 'name', '')}")
+
+        source_name = source.__module__.split(".")[0]
+        source_name = source_name.split("_", 1)[-1]
+        AirbyteSentry.init(source_tag=source_name)
 
     def parse_args(self, args: List[str]) -> argparse.Namespace:
         # set up parent parsers
